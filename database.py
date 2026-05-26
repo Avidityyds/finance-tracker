@@ -421,13 +421,62 @@ def record_account_transaction(tx_type, amount, currency, tx_date,
         VALUES (?,?,?,?,?,?,?,?)
     """, (tx_type, from_id, to_id, amount, currency, exchange_rate, tx_date, notes))
 
-    # 更新帳戶餘額
+    from_acct = conn.execute("SELECT currency, balance, twd_cost FROM accounts WHERE id=?",
+                             (from_id,)).fetchone() if from_id else None
+    to_acct   = conn.execute("SELECT currency, balance, twd_cost FROM accounts WHERE id=?",
+                             (to_id,)).fetchone()   if to_id   else None
+
     if tx_type in ("transfer", "withdrawal") and from_id:
         conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (amount, from_id))
+        # 從外幣帳扣款時，按比例縮減 twd_cost
+        if from_acct and from_acct["currency"] != "TWD" \
+                and from_acct["twd_cost"] is not None and from_acct["balance"] > 0:
+            new_bal = from_acct["balance"] - amount
+            new_twd = round(from_acct["twd_cost"] * (new_bal / from_acct["balance"]), 2)
+            conn.execute("UPDATE accounts SET twd_cost=? WHERE id=?", (new_twd, from_id))
+
     if tx_type in ("transfer", "deposit") and to_id:
-        # 如果幣別不同，存入金額要乘以匯率（外幣→TWD）
-        deposited = amount * exchange_rate if currency != "TWD" else amount
-        conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (deposited, to_id))
+        from_cur = from_acct["currency"] if from_acct else None
+        to_cur   = to_acct["currency"]
+
+        if from_cur is not None and from_cur != to_cur:
+            if from_cur == "TWD" and to_cur == "USD":
+                # 台幣換美金：存入 amount÷rate USD，twd_cost 記錄換匯成本
+                deposited    = round(amount / exchange_rate, 6)
+                existing_twd = to_acct["twd_cost"] if to_acct["twd_cost"] is not None else 0
+                conn.execute("UPDATE accounts SET balance = balance + ?, twd_cost = ? WHERE id=?",
+                             (deposited, existing_twd + amount, to_id))
+            elif from_cur == "USD" and to_cur == "TWD":
+                # 美金換台幣：存入 amount×rate TWD
+                deposited = round(amount * exchange_rate, 2)
+                conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (deposited, to_id))
+            else:
+                conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (amount, to_id))
+        else:
+            if from_cur is None:
+                # 純存款：依 currency vs 帳戶幣別判斷
+                if currency == to_cur:
+                    # 同幣別存入（USD→USD 或 TWD→TWD）
+                    conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (amount, to_id))
+                    if to_cur == "USD" and to_acct and exchange_rate > 1:
+                        # USD 存款：追蹤換匯成本
+                        existing_twd = to_acct["twd_cost"] if to_acct["twd_cost"] is not None else 0
+                        conn.execute("UPDATE accounts SET twd_cost = ? WHERE id=?",
+                                     (existing_twd + round(amount * exchange_rate, 2), to_id))
+                elif currency == "USD" and to_cur == "TWD":
+                    conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?",
+                                 (round(amount * exchange_rate, 2), to_id))
+                elif currency == "TWD" and to_cur == "USD":
+                    deposited = round(amount / exchange_rate, 6)
+                    existing_twd = to_acct["twd_cost"] if to_acct["twd_cost"] is not None else 0
+                    conn.execute("UPDATE accounts SET balance = balance + ?, twd_cost = ? WHERE id=?",
+                                 (deposited, existing_twd + amount, to_id))
+                else:
+                    conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (amount, to_id))
+            else:
+                # 同幣別轉帳：直接加
+                conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (amount, to_id))
+
     if tx_type == "adjustment" and to_id:
         conn.execute("UPDATE accounts SET balance = ? WHERE id=?", (amount, to_id))
 
@@ -446,14 +495,58 @@ def delete_account_transaction(tx_id):
         from_id       = row["from_account_id"]
         to_id         = row["to_account_id"]
 
-        # 反轉原本對帳戶餘額的影響
+        from_acct = conn.execute("SELECT currency, balance, twd_cost FROM accounts WHERE id=?",
+                                 (from_id,)).fetchone() if from_id else None
+        to_acct   = conn.execute("SELECT currency, balance, twd_cost FROM accounts WHERE id=?",
+                                 (to_id,)).fetchone()   if to_id   else None
+
         if tx_type in ("transfer", "withdrawal") and from_id:
             conn.execute("UPDATE accounts SET balance = balance + ? WHERE id=?", (amount, from_id))
-        if tx_type in ("transfer", "deposit") and to_id:
-            deposited = amount * exchange_rate if currency != "TWD" else amount
-            conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (deposited, to_id))
-        # adjustment 是直接 SET 餘額，無法安全反轉，僅刪除紀錄
+            if from_acct and from_acct["currency"] != "TWD" \
+                    and from_acct["twd_cost"] is not None and from_acct["balance"] > 0:
+                new_bal = from_acct["balance"] + amount
+                new_twd = round(from_acct["twd_cost"] * (new_bal / from_acct["balance"]), 2)
+                conn.execute("UPDATE accounts SET twd_cost=? WHERE id=?", (new_twd, from_id))
 
+        if tx_type in ("transfer", "deposit") and to_id:
+            from_cur = from_acct["currency"] if from_acct else None
+            to_cur   = to_acct["currency"]
+
+            if from_cur is not None and from_cur != to_cur:
+                if from_cur == "TWD" and to_cur == "USD":
+                    deposited    = round(amount / exchange_rate, 6)
+                    existing_twd = to_acct["twd_cost"] if to_acct["twd_cost"] is not None else 0
+                    conn.execute("UPDATE accounts SET balance = balance - ?, twd_cost = ? WHERE id=?",
+                                 (deposited, max(0, existing_twd - amount), to_id))
+                elif from_cur == "USD" and to_cur == "TWD":
+                    deposited = round(amount * exchange_rate, 2)
+                    conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (deposited, to_id))
+                else:
+                    conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (amount, to_id))
+            else:
+                if from_cur is None:
+                    # 反轉純存款
+                    if currency == to_cur:
+                        conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (amount, to_id))
+                        if to_cur == "USD" and to_acct and exchange_rate > 1:
+                            existing_twd = to_acct["twd_cost"] if to_acct["twd_cost"] is not None else 0
+                            conn.execute("UPDATE accounts SET twd_cost = ? WHERE id=?",
+                                         (max(0, existing_twd - round(amount * exchange_rate, 2)), to_id))
+                    elif currency == "USD" and to_cur == "TWD":
+                        conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?",
+                                     (round(amount * exchange_rate, 2), to_id))
+                    elif currency == "TWD" and to_cur == "USD":
+                        deposited = round(amount / exchange_rate, 6)
+                        existing_twd = to_acct["twd_cost"] if to_acct["twd_cost"] is not None else 0
+                        conn.execute("UPDATE accounts SET balance = balance - ?, twd_cost = ? WHERE id=?",
+                                     (deposited, max(0, existing_twd - amount), to_id))
+                    else:
+                        conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (amount, to_id))
+                else:
+                    # 同幣別轉帳反轉
+                    conn.execute("UPDATE accounts SET balance = balance - ? WHERE id=?", (amount, to_id))
+
+        # adjustment 是直接 SET 餘額，無法安全反轉，僅刪除紀錄
         conn.execute("DELETE FROM account_transactions WHERE id=?", (tx_id,))
         conn.commit()
     conn.close()
