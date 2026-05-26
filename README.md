@@ -87,4 +87,4 @@ finance_tracker/
 - **前端**：Streamlit
 - **資料庫**：SQLite（`finance.db`）
 - **股價抓取**：yfinance（Yahoo Finance）
-- **外幣換匯成本**：每個帳戶可鎖定換匯當時的台幣成本（`twd_cost`），不隨即時匯率浮動；買賣股票時自動按比例調整
+- **外幣換匯成本**：每個帳戶可鎖定換匯時的台幣成本（`twd_cost`），不隨即時匯率浮動；買賣股票自動按比例調整
