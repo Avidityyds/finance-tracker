@@ -281,20 +281,20 @@ if page == "overview":
 
         if rows:
             df = pd.DataFrame(rows)
-            # 損益橫條圖
-            df_sorted = df.sort_values("損益")
-            bar_colors = ["#10B981" if v < 0 else "#EF4444" for v in df_sorted["損益"]]
+            # 損益橫條圖（x 軸統一用報酬率%，避免 TWD/USD 混用）
+            df_sorted = df.sort_values("報酬%")
+            bar_colors = ["#10B981" if v < 0 else "#EF4444" for v in df_sorted["報酬%"]]
             fig_bar = go.Figure(go.Bar(
-                x=df_sorted["損益"],
+                x=df_sorted["報酬%"],
                 y=df_sorted["名稱"],
                 orientation='h',
                 marker_color=bar_colors,
-                text=[f"{v:+.1f}%" for v in df_sorted["報酬%"]],
+                text=[f"{v:+,.0f} {c}" for v, c in zip(df_sorted["損益"], df_sorted["幣別"])],
                 textposition="outside"
             ))
             fig_bar.update_layout(
-                xaxis_title="損益（原幣）", yaxis_title="",
-                margin=dict(t=10, b=10, l=0, r=40), height=320,
+                xaxis_title="報酬率 (%)", yaxis_title="",
+                margin=dict(t=10, b=10, l=0, r=80), height=320,
                 plot_bgcolor="rgba(0,0,0,0)"
             )
             st.plotly_chart(fig_bar, width="stretch")
