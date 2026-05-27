@@ -436,11 +436,12 @@ elif page == "accounts":
 
         from_acc = c1.selectbox("從帳戶", ["（無）"] + acc_list, key="from_acc")
         to_acc   = c2.selectbox("到帳戶",  ["（無）"] + acc_list, key="to_acc")
-        amount   = c3.number_input("金額", value=0.0, step=1000.0, format="%.2f")
+        amount   = c3.number_input("金額（從帳戶扣除）", value=0.0, step=1000.0, format="%.2f")
 
         c4, c5, c6 = st.columns(3)
-        currency = c4.selectbox("幣別", ["TWD", "USD"])
-        exrate   = c5.number_input("匯率（外幣→TWD）", value=rate, step=0.1, format="%.4f")
+        currency = c4.selectbox("幣別", ["TWD", "USD"], help="轉帳時幣別由帳戶自動判斷，此欄僅在存入／提出時有效")
+        exrate   = c5.number_input("USD/TWD 匯率", value=rate, step=0.1, format="%.4f",
+                                   help="台幣→美金 ÷ 此值，美金→台幣 × 此值")
         tx_date  = c6.date_input("日期", value=date.today())
         notes    = st.text_input("備註")
 
@@ -621,6 +622,7 @@ elif page == "trades":
     stocks   = db.get_stocks()
     rate     = usd_rate()
     stock_opts = {f"{s['name']} ({s['symbol']})": s for s in stocks}
+    holdings_map = {h["stock_id"]: h["shares"] for h in db.get_holdings()}
 
     # ── 手續費計算 ──────────────────────────────────────────
     def calc_fee(market: str, shares: float, price: float) -> tuple[float, str]:
@@ -667,10 +669,13 @@ elif page == "trades":
         notes = st.text_input("備註（選填）", key="trade_notes")
 
         if st.button("確認送出", icon=":material/check:", key="trade_submit"):
+            current_shares = holdings_map.get(s["id"], 0)
             if price <= 0:
                 st.error("請輸入成交價")
             elif shares <= 0:
                 st.error("股數必須大於 0")
+            elif tx_type == "sell" and shares > current_shares:
+                st.error(f"賣出股數（{shares:g}）超過現有持倉（{current_shares:g} 股）")
             else:
                 db.record_stock_transaction(
                     s["id"], tx_type, shares, price, fee,

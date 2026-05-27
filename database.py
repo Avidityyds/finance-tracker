@@ -127,7 +127,7 @@ def seed_initial_data():
 
     today = date.today().isoformat()
 
-    # ── 示範帳戶 ──────────────────────────────────────────────
+    # ── 帳戶 ──────────────────────────────────────────────
     accounts = [
         ("示範銀行 台幣活存",   "bank",       "TWD", 100000),
         ("示範銀行 外幣活存",   "bank",       "USD", 1000),
@@ -142,20 +142,20 @@ def seed_initial_data():
         )
         acc_ids[name] = c.lastrowid
 
-    # ── 示範股票 & 持倉 ───────────────────────────────────
+    # ── 股票主檔 & 持倉 ───────────────────────────────────
     us_stocks = [
-        ("AAPL", "蘋果",  "US", "USD", acc_ids["示範證券 外幣帳"], 10,  180.00, 192.35),
-        ("MSFT", "微軟",  "US", "USD", acc_ids["示範證券 外幣帳"],  5,  380.00, 415.20),
+        ("AAPL", "Apple",     "US", "USD", acc_ids["示範證券 外幣帳"], 10, 180.00, 185.00),
+        ("MSFT", "Microsoft", "US", "USD", acc_ids["示範證券 外幣帳"],  5, 380.00, 390.00),
     ]
     tw_stocks = [
-        ("0050", "元大台灣50", "TW", "TWD", acc_ids["示範證券 台股帳"], 1000, 155.00, 168.50),
-        ("2330", "台積電",     "TW", "TWD", acc_ids["示範證券 台股帳"],   10, 850.00, 920.00),
+        ("0050", "元大台灣50", "TW", "TWD", acc_ids["示範證券 台股帳"], 1000, 155.00, 160.00),
+        ("2330", "台積電",     "TW", "TWD", acc_ids["示範證券 台股帳"],   10, 850.00, 900.00),
     ]
 
     for symbol, name, market, cur, acc_id, shares, avg_cost, last_price in (us_stocks + tw_stocks):
         c.execute(
-            "INSERT INTO stocks (symbol, name, market, currency, account_id, cash_account_id) VALUES (?,?,?,?,?,?)",
-            (symbol, name, market, cur, acc_id, acc_id)
+            "INSERT INTO stocks (symbol, name, market, currency, account_id) VALUES (?,?,?,?,?)",
+            (symbol, name, market, cur, acc_id)
         )
         stock_id = c.lastrowid
 
@@ -253,7 +253,7 @@ def get_holdings():
         FROM holdings h
         JOIN stocks s ON h.stock_id = s.id
         JOIN accounts a ON s.account_id = a.id
-        WHERE h.shares > 0
+        WHERE h.shares > 0 AND a.active = 1
         ORDER BY s.market, s.name
     """).fetchall()
     conn.close()
@@ -265,6 +265,7 @@ def get_stocks():
     rows = conn.execute("""
         SELECT s.*, a.name as account_name
         FROM stocks s JOIN accounts a ON s.account_id = a.id
+        WHERE a.active = 1
         ORDER BY s.market, s.name
     """).fetchall()
     conn.close()
