@@ -9,11 +9,16 @@ from datetime import datetime, date
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "finance.db")
 
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+_db_conn: sqlite3.Connection | None = None
+
+
+def get_conn() -> sqlite3.Connection:
+    global _db_conn
+    if _db_conn is None:
+        _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _db_conn.row_factory = sqlite3.Row
+        _db_conn.execute("PRAGMA foreign_keys = ON")
+    return _db_conn
 
 
 # ─── 初始化 ────────────────────────────────────────────────────────────────────
@@ -111,7 +116,6 @@ def init_db():
             pass
 
     conn.commit()
-    conn.close()
 
 
 def seed_initial_data():
@@ -122,7 +126,6 @@ def seed_initial_data():
     # 確認是否已有資料
     c.execute("SELECT COUNT(*) FROM accounts")
     if c.fetchone()[0] > 0:
-        conn.close()
         return  # 已有資料，不重複插入
 
     today = date.today().isoformat()
@@ -176,7 +179,6 @@ def seed_initial_data():
     c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('initialized', '1')")
 
     conn.commit()
-    conn.close()
 
 
 # ─── Settings ──────────────────────────────────────────────────────────────────
@@ -184,7 +186,6 @@ def seed_initial_data():
 def get_setting(key, default=None):
     conn = get_conn()
     row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    conn.close()
     return row["value"] if row else default
 
 
@@ -195,7 +196,6 @@ def set_setting(key, value):
         (key, str(value), datetime.now().isoformat())
     )
     conn.commit()
-    conn.close()
 
 
 # ─── Accounts ──────────────────────────────────────────────────────────────────
@@ -207,7 +207,6 @@ def get_accounts(active_only=True):
         q += " WHERE active=1"
     q += " ORDER BY currency, name"
     rows = conn.execute(q).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -218,28 +217,24 @@ def add_account(name, atype, currency, balance, notes=""):
         (name, atype, currency, balance, notes)
     )
     conn.commit()
-    conn.close()
 
 
 def update_account_balance(account_id, new_balance):
     conn = get_conn()
     conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_balance, account_id))
     conn.commit()
-    conn.close()
 
 
 def update_account_twd_cost(account_id, twd_cost):
     conn = get_conn()
     conn.execute("UPDATE accounts SET twd_cost=? WHERE id=?", (twd_cost, account_id))
     conn.commit()
-    conn.close()
 
 
 def delete_account(account_id):
     conn = get_conn()
     conn.execute("UPDATE accounts SET active=0 WHERE id=?", (account_id,))
     conn.commit()
-    conn.close()
 
 
 # ─── Stocks & Holdings ─────────────────────────────────────────────────────────
@@ -256,7 +251,6 @@ def get_holdings():
         WHERE h.shares > 0 AND a.active = 1
         ORDER BY s.market, s.name
     """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -268,7 +262,6 @@ def get_stocks():
         WHERE a.active = 1
         ORDER BY s.market, s.name
     """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -285,7 +278,6 @@ def add_stock(symbol, name, market, currency, account_id, cash_account_id=None):
         (stock_id,)
     )
     conn.commit()
-    conn.close()
     return stock_id
 
 
@@ -296,7 +288,6 @@ def update_last_price(stock_id, price):
         (price, date.today().isoformat(), stock_id)
     )
     conn.commit()
-    conn.close()
 
 
 def _recalc_holding(conn, stock_id):
@@ -378,7 +369,6 @@ def record_stock_transaction(stock_id, tx_type, shares, price, fee, tx_date, not
     _recalc_holding(conn, stock_id)
     _adjust_account_for_trade(conn, stock_id, tx_type, shares, price, fee)
     conn.commit()
-    conn.close()
 
 
 def delete_stock_transaction(tx_id):
@@ -392,7 +382,6 @@ def delete_stock_transaction(tx_id):
         conn.execute("DELETE FROM stock_transactions WHERE id=?", (tx_id,))
         _recalc_holding(conn, row["stock_id"])
         conn.commit()
-    conn.close()
 
 
 def get_stock_transactions(stock_id=None):
@@ -406,7 +395,6 @@ def get_stock_transactions(stock_id=None):
         rows = conn.execute(q + " ORDER BY t.date DESC, t.id DESC", (stock_id,)).fetchall()
     else:
         rows = conn.execute(q + " ORDER BY t.date DESC, t.id DESC").fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -482,7 +470,6 @@ def record_account_transaction(tx_type, amount, currency, tx_date,
         conn.execute("UPDATE accounts SET balance = ? WHERE id=?", (amount, to_id))
 
     conn.commit()
-    conn.close()
 
 
 def delete_account_transaction(tx_id):
@@ -550,7 +537,6 @@ def delete_account_transaction(tx_id):
         # adjustment 是直接 SET 餘額，無法安全反轉，僅刪除紀錄
         conn.execute("DELETE FROM account_transactions WHERE id=?", (tx_id,))
         conn.commit()
-    conn.close()
 
 
 def get_account_transactions():
@@ -564,5 +550,4 @@ def get_account_transactions():
         LEFT JOIN accounts ta ON t.to_account_id   = ta.id
         ORDER BY t.date DESC, t.id DESC
     """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]

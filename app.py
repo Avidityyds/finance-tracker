@@ -750,9 +750,20 @@ elif page == "trades":
                     )
                 )
                 if st.button("刪除此筆", type="secondary", icon=":material/delete:"):
-                    db.delete_stock_transaction(del_id)
-                    st.session_state["_toast"] = "已刪除，持倉已重新計算"
+                    st.session_state["_del_stock_tx_confirm"] = del_id
                     st.rerun()
+                if st.session_state.get("_del_stock_tx_confirm") == del_id:
+                    row = df_show[df_show["id"] == del_id].iloc[0]
+                    st.warning(f"確定要刪除「{row['name']} {row['type']} {row['shares']:g} 股」？持倉將自動重算。")
+                    sc1, sc2 = st.columns(2)
+                    if sc1.button("確認刪除", type="primary", icon=":material/delete:", key="del_stock_tx_confirm"):
+                        db.delete_stock_transaction(del_id)
+                        st.session_state.pop("_del_stock_tx_confirm", None)
+                        st.session_state["_toast"] = "已刪除，持倉已重新計算"
+                        st.rerun()
+                    if sc2.button("取消", key="del_stock_tx_cancel"):
+                        st.session_state.pop("_del_stock_tx_confirm", None)
+                        st.rerun()
     else:
         st.info("尚無買賣紀錄")
 
@@ -778,9 +789,24 @@ elif page == "transactions":
         df["from_name"] = df["from_name"].fillna("—")
         df["to_name"]   = df["to_name"].fillna("—")
         df["notes"]     = df["notes"].fillna("")
+        df["date"]      = pd.to_datetime(df["date"])
+
+        # ── 日期篩選 ────────────────────────────────────────
+        fc1, fc2, fc3 = st.columns(3)
+        date_min = df["date"].min().date()
+        date_max = df["date"].max().date()
+        d_from = fc1.date_input("起始日期", value=date_min, min_value=date_min, max_value=date_max, key="tx_d_from")
+        d_to   = fc2.date_input("結束日期", value=date_max, min_value=date_min, max_value=date_max, key="tx_d_to")
+        type_filter = fc3.selectbox("篩選類型", ["全部", "↔ 轉帳", "↑ 存入", "↓ 提出", "✎ 調整"], key="tx_type_filter")
+
+        df_show = df[(df["date"].dt.date >= d_from) & (df["date"].dt.date <= d_to)]
+        if type_filter != "全部":
+            df_show = df_show[df_show["類型"] == type_filter]
+        df_show = df_show.copy()
+        df_show["date"] = df_show["date"].dt.strftime("%Y-%m-%d")
 
         st.dataframe(
-            df[["date","類型","from_name","to_name","金額","currency","匯率","notes"]].rename(columns={
+            df_show[["date","類型","from_name","to_name","金額","currency","匯率","notes"]].rename(columns={
                 "date": "日期", "from_name": "從", "to_name": "到",
                 "currency": "幣別", "notes": "備註"
             }),
@@ -798,10 +824,20 @@ elif page == "transactions":
             sel = df[df["id"] == del_id].iloc[0]
             if sel["type"] == "adjustment":
                 st.warning("調整類型的紀錄刪除後**不會**自動回復帳戶餘額，請手動調整。")
-            if st.button("刪除此筆", type="secondary", icon=":material/delete:", key="del_acc_tx"):
-                db.delete_account_transaction(del_id)
-                st.session_state["_toast"] = "已刪除" + ("，餘額已反轉" if sel["type"] != "adjustment" else "（請手動確認帳戶餘額）")
+            if st.button("刪除此筆", type="secondary", icon=":material/delete:", key="del_acc_tx_btn"):
+                st.session_state["_del_acc_tx_confirm"] = del_id
                 st.rerun()
+            if st.session_state.get("_del_acc_tx_confirm") == del_id:
+                st.warning(f"確定要刪除這筆紀錄？此操作{'無法完全復原，請手動確認帳戶餘額' if sel['type'] == 'adjustment' else '會自動反轉帳戶餘額'}。")
+                cc1, cc2 = st.columns(2)
+                if cc1.button("確認刪除", type="primary", icon=":material/delete:", key="del_acc_tx_confirm"):
+                    db.delete_account_transaction(del_id)
+                    st.session_state.pop("_del_acc_tx_confirm", None)
+                    st.session_state["_toast"] = "已刪除" + ("，餘額已反轉" if sel["type"] != "adjustment" else "（請手動確認帳戶餘額）")
+                    st.rerun()
+                if cc2.button("取消", key="del_acc_tx_cancel"):
+                    st.session_state.pop("_del_acc_tx_confirm", None)
+                    st.rerun()
     else:
         st.info("尚無資金異動紀錄")
 
